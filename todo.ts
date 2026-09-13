@@ -15,7 +15,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { loadConfig, validateGuidanceFields } from "./config.js";
 import { formatStatusLabel, t } from "./state/i18n-bridge.js";
-import { selectTasksByStatus, selectTodoCounts, selectVisibleTasks } from "./state/selectors.js";
+import { selectTasksByStatus, selectTodoCounts, selectVisibleTasks, sortTasksByPriority } from "./state/selectors.js";
 import { applyTaskMutation } from "./state/state-reducer.js";
 import { commitState, getRenderState, getState, sid } from "./state/store.js";
 import { buildToolResult } from "./tool/response-envelope.js";
@@ -60,17 +60,22 @@ export const DEFAULT_PROMPT_GUIDELINES: string[] = [
 	"Task status is a 4-state machine: pending → in_progress → completed, plus deleted as a tombstone. Pass activeForm (present-continuous label, e.g. 'researching existing tool') when marking in_progress.",
 	'To change a task\'s status, call update with the task id and the target status, e.g. {"action":"update","id":3,"status":"completed"} or {"action":"update","id":3,"status":"in_progress","activeForm":"writing tests"}. status is the field that changes the task; an update without a mutable field (status or another) is rejected.',
 	"Use blockedBy to express dependencies (A is blocked by B). On create, pass blockedBy as the initial set. On update, use addBlockedBy / removeBlockedBy (additive merge — do not resend the full array). Cycles are rejected.",
-	"list hides tombstoned (deleted) tasks by default; pass includeDeleted:true to see them. Pass status to filter by a single status.",
+	"list hides tombstoned (deleted) tasks by default; pass includeDeleted:true to see them. Pass status to filter by a single status, or filter:'myterm' for a case-insensitive substring match on subject, description, and owner.",
 	"Subject must be short and imperative (e.g. 'Research existing tool'); description is for long-form detail. activeForm is a present-continuous label shown while in_progress.",
+	// ── dancher extension (2026-09-13) ──
+	"Priority is an optional sort hint: pass priority:'P0' for urgent work, 'P2' for background work (unset = normal). The overlay and /todos order P0 first. Use P0 sparingly.",
+	"Subtasks: pass parent:#N on create (or update) to nest a task one level under #N — parent rows show a (done/total) rollup. One nesting level only; keep decomposition shallow (a handful of children).",
+	"blockedBy is enforced: update to in_progress or completed is rejected while blockers are unfinished. Finish or delete the blockers, or removeBlockedBy if the dependency is stale.",
+	"Status corrections are cheap: completed → in_progress reopens a prematurely completed task; deleted → pending revives a tombstone. When the last unfinished task is completed the tool result says so — deliver the final summary immediately and stop.",
 ];
 
 export function registerTodoTool(pi: ExtensionAPI): void {
 	const guidance = validateGuidanceFields(loadConfig().guidance);
-	pi.registerTool({
+		pi.registerTool({
 		name: TOOL_NAME,
 		label: TOOL_LABEL,
 		description:
-			"Manage a task list for tracking multi-step progress. Actions: create (new task), update (change status/fields/dependencies), list (all tasks, optionally filtered by status), get (single task details), delete (tombstone), clear (reset all). Status: pending → in_progress → completed, plus deleted tombstone. Use this to plan and track multi-step work like research, design, and implementation.",
+			"Manage a task list for tracking multi-step progress. Actions: create (new task), update (change status/fields/dependencies), list (all tasks, optionally filtered by status or free text), get (single task details), delete (tombstone), clear (reset all). Status: pending → in_progress → completed, plus deleted tombstone (revivable). Optional priority (P0/P1/P2) and one-level subtasks (parent). blockedBy dependencies are enforced. Use this to plan and track multi-step work like research, design, and implementation.",
 		promptSnippet: guidance.promptSnippet ?? DEFAULT_PROMPT_SNIPPET,
 		promptGuidelines: guidance.promptGuidelines ?? DEFAULT_PROMPT_GUIDELINES,
 		parameters: TodoParamsSchema,
@@ -126,13 +131,16 @@ export function registerTodosCommand(pi: ExtensionAPI): void {
 			if (counts.pending > 0) header.push(`${counts.pending} ${formatStatusLabel("pending")}`);
 
 			const lines: string[] = [header.join(" · ")];
-			if (groups.pending.length > 0) {
+			// dancher extension (2026-09-13): priority order within each section.
+			const pending = sortTasksByPriority(groups.pending);
+			const inProgress = sortTasksByPriority(groups.inProgress);
+			if (pending.length > 0) {
 				lines.push(t("command.section.pending", SECTION_PENDING));
-				for (const task of groups.pending) lines.push(formatCommandTaskLine(task, "○"));
+				for (const task of pending) lines.push(formatCommandTaskLine(task, "○"));
 			}
-			if (groups.inProgress.length > 0) {
+			if (inProgress.length > 0) {
 				lines.push(t("command.section.in_progress", SECTION_IN_PROGRESS));
-				for (const task of groups.inProgress) lines.push(formatCommandTaskLine(task, "◐"));
+				for (const task of inProgress) lines.push(formatCommandTaskLine(task, "◐"));
 			}
 			if (groups.completed.length > 0) {
 				lines.push(t("command.section.completed", SECTION_COMPLETED));

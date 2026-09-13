@@ -25,6 +25,8 @@ export const MSG_NO_TODOS = "No todos yet. Ask the agent to add some!";
 
 export type TaskStatus = "pending" | "in_progress" | "completed" | "deleted";
 
+export type TaskPriority = "P0" | "P1" | "P2";
+
 export type TaskAction = "create" | "update" | "list" | "get" | "delete" | "clear";
 
 export interface Task {
@@ -36,6 +38,14 @@ export interface Task {
 	blockedBy?: number[];
 	owner?: string;
 	metadata?: Record<string, unknown>;
+	/** Subtask parent id (one level: the parent must itself be top-level). */
+	parent?: number;
+	/** Priority hint — P0 highest. Sorts within a status; unset keeps queue position. */
+	priority?: TaskPriority;
+	/** Epoch ms bookkeeping. Absent on tasks replayed from pre-timestamp versions. */
+	createdAt?: number;
+	updatedAt?: number;
+	completedAt?: number;
 }
 
 /**
@@ -70,6 +80,9 @@ export interface TaskMutationParams {
 	metadata?: Record<string, unknown>;
 	id?: number;
 	includeDeleted?: boolean;
+	parent?: number;
+	priority?: TaskPriority;
+	filter?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,6 +108,23 @@ export const TodoParamsSchema = Type.Object({
 	blockedBy: Type.Optional(
 		Type.Array(Type.Number(), {
 			description: "Initial blockedBy ids (create only)",
+		}),
+	),
+	parent: Type.Optional(
+		Type.Number({
+			description:
+				"Make this a subtask of #N (create/update; one level — the parent must be a top-level task). Parent rows show a child rollup (done/total).",
+		}),
+	),
+	priority: Type.Optional(
+		StringEnum(["P0", "P1", "P2"] as const, {
+			description:
+				"Priority hint: P0 (urgent) > P1 (normal) > P2 (low). The overlay and /todos sort by priority within a status. Unset = queue position.",
+		}),
+	),
+	filter: Type.Optional(
+		Type.String({
+			description: "list only: substring match against subject, description, and owner (case-insensitive)",
 		}),
 	),
 	addBlockedBy: Type.Optional(

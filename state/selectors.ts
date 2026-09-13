@@ -6,6 +6,42 @@ export function selectVisibleTasks(state: TaskState): readonly Task[] {
 	return state.tasks.filter((t) => t.status !== "deleted");
 }
 
+/** Priority rank for sorting: P0 (urgent) first, P2 last, unset = P1 slot. Stable. */
+export function priorityRank(t: Task): number {
+	return t.priority === "P0" ? 0 : t.priority === "P2" ? 2 : 1;
+}
+
+/** Stable sort by priority (ties keep insertion order). */
+export function sortTasksByPriority<T extends Task>(tasks: readonly T[]): T[] {
+	return [...tasks].sort((a, b) => priorityRank(a) - priorityRank(b));
+}
+
+/** Subtasks of `parentId` (alive tasks only). Priority-sorted. */
+export function selectSubtasks(state: TaskState, parentId: number): readonly Task[] {
+	return sortTasksByPriority(
+		selectVisibleTasks(state).filter((t) => t.parent === parentId),
+	);
+}
+
+/**
+ * Overlay row order (2026-09-13): top-level tasks priority-sorted, each
+ * immediately followed by its priority-sorted subtasks. A `parent` reference
+ * to a task not present in `all` (dangling after partial filtering) renders
+ * the task as top-level rather than dropping it.
+ */
+export function orderTasksForOverlay(all: readonly Task[]): Task[] {
+	const ids = new Set(all.map((t) => t.id));
+	const tops = all.filter((t) => t.parent === undefined || !ids.has(t.parent));
+	const ordered: Task[] = [];
+	for (const top of sortTasksByPriority(tops)) {
+		ordered.push(top);
+		for (const child of sortTasksByPriority(all.filter((t) => t.parent === top.id))) {
+			ordered.push(child);
+		}
+	}
+	return ordered;
+}
+
 /**
  * Group visible tasks by status. Iteration order at the call site uses
  * (`completed`, `inProgress`, `pending`) to match the `/todos` header part
@@ -73,7 +109,7 @@ export interface OverlayLayout {
 	truncatedTail: number;
 }
 export function selectOverlayLayout(state: TaskState, budget: number): OverlayLayout {
-	const all = selectVisibleTasks(state);
+	const all = orderTasksForOverlay(selectVisibleTasks(state));
 	if (all.length <= budget) {
 		return { visible: all, hiddenCompleted: 0, truncatedTail: 0 };
 	}

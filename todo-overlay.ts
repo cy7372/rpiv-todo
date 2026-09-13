@@ -28,6 +28,49 @@ const OVERLAY_MORE = "more";
 const OVERLAY_EXPAND_HINT = "{key} to expand";
 const OVERLAY_COLLAPSED = "collapsed";
 
+// dancher extension (2026-09-13): 8-cell progress bar for the heading.
+const PROGRESS_CELLS = 8;
+function progressBar(done: number, total: number): string {
+	if (total <= 0) return "";
+	const filled = Math.round((done / total) * PROGRESS_CELLS);
+	return "▓".repeat(filled) + "░".repeat(PROGRESS_CELLS - filled);
+}
+
+/**
+ * dancher extension (2026-09-13): resolve the dancher yinor-client relative to
+ * this package's runtime location. Supported layouts (all probed with
+ * fs.existsSync before import, first hit wins):
+ *   - npm install:  ~/.pi/agent/npm/node_modules/@juicesharp/rpiv-todo/  (3 up)
+ *   - git source:   ~/.pi/agent/git/<host>/<owner>/<repo>/               (4 up)
+ *   - dev checkout: any ancestor .pi/agent/extensions/dancher/…
+ * Falls back to the USERPROFILE-anchored absolute path. All-quiet on failure.
+ */
+async function importYinorClient(): Promise<{ postEpisode: (ep: Record<string, unknown>) => Promise<unknown> } | undefined> {
+	const { existsSync } = await import("node:fs");
+	const { fileURLToPath } = await import("node:url");
+	const path = await import("node:path");
+	const here = path.dirname(fileURLToPath(import.meta.url));
+	const home = process.env.USERPROFILE ?? process.env.HOME;
+	const candidates = [
+		path.resolve(here, "../../../extensions/dancher/lib/yinor-client.js"), // npm layout
+		path.resolve(here, "../../../../extensions/dancher/lib/yinor-client.js"), // git-source clone layout
+		...(home ? [path.join(home, ".pi/agent/extensions/dancher/lib/yinor-client.js")] : []),
+	];
+	for (const candidate of candidates) {
+		try {
+			if (existsSync(candidate)) {
+				const mod = (await import(/* @vite-ignore */ candidate)) as {
+					postEpisode: (ep: Record<string, unknown>) => Promise<unknown>;
+			};
+				if (typeof mod?.postEpisode === "function") return mod;
+			}
+		} catch {
+			/* probe next */
+		}
+	}
+	return undefined;
+}
+
 export class TodoOverlay {
 	private uiCtx: ExtensionUIContext | undefined;
 	private widgetRegistered = false;
@@ -138,13 +181,15 @@ export class TodoOverlay {
 		void this.persistToYinor(tasks);
 	}
 
-	/** 本地补丁（2026-09-07）：完成清单写入 yinor（走 lib/yinor-client 统一出口，静默尽力而为） */
+	/** 本地补丁（2026-09-07）：完成清单写入 yinor（走 lib/yinor-client 统一出口，静默尽力而为）。
+	 * 2026-09-13：import 改多候选探测，包从 npm 换 git 源安装位置变化后不再断链。 */
 	private async persistToYinor(tasks: { subject: string }[]): Promise<void> {
 		try {
-			const { postEpisode } = await import("../../../extensions/dancher/lib/yinor-client.js");
+			const mod = await importYinorClient();
+			if (!mod) return;
 			const lines = tasks.map((t) => t.subject).filter(Boolean).join("；");
 			if (!lines) return;
-			await postEpisode({
+			await mod.postEpisode({
 				content: `todo 清单完成（${tasks.length} 项）：${lines}`,
 				source: "rpiv-todo",
 				sourceDescription: "todo 全完成时自动沉淀（本地补丁 2026-09-07）",
@@ -223,7 +268,10 @@ export class TodoOverlay {
 
 		const headingColor = hasActive ? "accent" : "dim";
 		const headingIcon = hasActive ? "●" : "○";
-		const headingText = `${t("overlay.heading", OVERLAY_HEADING)} (${counts.completed}/${counts.total})`;
+		const bar = progressBar(counts.completed, counts.total);
+		const headingText = bar
+			? `${t("overlay.heading", OVERLAY_HEADING)} ${bar} (${counts.completed}/${counts.total})`
+			: `${t("overlay.heading", OVERLAY_HEADING)} (${counts.completed}/${counts.total})`;
 		const heading = truncate(`${theme.fg(headingColor, headingIcon)} ${theme.fg(headingColor, headingText)}`);
 
 		// Collapsed view: just the heading + a dim "└─" expand hint, then the
@@ -261,7 +309,11 @@ export class TodoOverlay {
 		const bodyBudget = this.uiCtx?.getToolsExpanded?.() === true ? overlayTasks.length : getMaxWidgetLines() - 1;
 		const layout = selectOverlayLayout(overlayState, bodyBudget);
 		for (const task of layout.visible) {
-			lines.push(truncate(`${theme.fg("dim", "├─")} ${formatOverlayTaskLine(task, theme, showIds)}`));
+			lines.push(
+				truncate(
+					`${theme.fg("dim", "├─")} ${formatOverlayTaskLine(task, theme, showIds, snapshot.tasks)}`,
+				),
+			);
 		}
 
 		const newlyDisplayedCompletedTaskIds = overlayTasks

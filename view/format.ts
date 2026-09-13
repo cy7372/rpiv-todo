@@ -65,23 +65,44 @@ export function overlayStatusGlyph(status: TaskStatus, theme: Theme): string {
 	}
 }
 
+/** Priority badge for overlay/command rows. P0 pops (warning); the rest stay quiet. */
+function priorityBadge(t: Task, theme: Theme): string {
+	if (!t.priority) return "";
+	const color = t.priority === "P0" ? "warning" : "dim";
+	return `${theme.fg(color, t.priority)} `;
+}
+
+/** Subtask indent marker — one nesting level only. */
+const SUBTASK_PREFIX = "  ↳ ";
+
 /**
  * Format a single task row for the persistent overlay. The subject color
  * reflects task state while IDs and supporting metadata stay visually quiet.
+ *
+ * Dancher extension (2026-09-13): subtasks indent with `↳`; priority badges;
+ * parent rows append a child rollup `(done/total)` when `allTasks` is given.
  */
-export function formatOverlayTaskLine(t: Task, theme: Theme, showId: boolean): string {
+export function formatOverlayTaskLine(t: Task, theme: Theme, showId: boolean, allTasks?: readonly Task[]): string {
 	const glyph = overlayStatusGlyph(t.status, theme);
+	const indent = t.parent !== undefined ? SUBTASK_PREFIX : "";
 	const subjectColor =
 		t.status === "in_progress" ? "accent" : t.status === "completed" || t.status === "deleted" ? "muted" : "text";
 	let subject = theme.fg(subjectColor, sanitizeTerminalText(t.subject));
 	if (t.status === "completed" || t.status === "deleted") {
 		subject = theme.strikethrough(subject);
 	}
-	let line = `${glyph}`;
+	let line = `${indent}${glyph}${priorityBadge(t, theme)}`;
 	if (showId) line += ` ${theme.fg("dim", `#${t.id}`)}`;
 	line += ` ${subject}`;
 	if (t.status === "in_progress" && t.activeForm) {
 		line += ` ${theme.fg("muted", `(${sanitizeTerminalText(t.activeForm)})`)}`;
+	}
+	if (allTasks && t.parent === undefined) {
+		const kids = allTasks.filter((x) => x.parent === t.id && x.status !== "deleted");
+		if (kids.length > 0) {
+			const done = kids.filter((x) => x.status === "completed").length;
+			line += ` ${theme.fg("muted", `(${done}/${kids.length})`)}`;
+		}
 	}
 	if (t.blockedBy && t.blockedBy.length > 0) {
 		line += ` ${theme.fg("muted", `⛓ ${t.blockedBy.map((id) => `#${id}`).join(",")}`)}`;
@@ -96,7 +117,9 @@ export function formatOverlayTaskLine(t: Task, theme: Theme, showId: boolean): s
 export function formatCommandTaskLine(t: Task, glyph: string): string {
 	const form = t.status === "in_progress" && t.activeForm ? ` (${sanitizeTerminalText(t.activeForm)})` : "";
 	const block = t.blockedBy?.length ? `    ⛓ ${t.blockedBy.map((id) => `#${id}`).join(",")}` : "";
-	return `  ${glyph} #${t.id} ${sanitizeTerminalText(t.subject)}${form}${block}`;
+	const badge = t.priority ? `${t.priority} ` : "";
+	const indent = t.parent !== undefined ? "  " : "";
+	return `  ${indent}${glyph} ${badge}#${t.id} ${sanitizeTerminalText(t.subject)}${form}${block}`;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,23 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"strict": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"types": ["node"],
+		"typeRoots": ["D:/Programs/pi-web/node_modules/@types"],
+		"paths": {
+			"@earendil-works/pi-coding-agent": [
+				"D:/Programs/pi-web/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
+			],
+			"@earendil-works/pi-tui": ["D:/Programs/pi-web/node_modules/@earendil-works/pi-tui/dist/index.d.ts"],
+			"typebox": ["D:/Programs/pi-web/node_modules/typebox/build/index.d.mts"],
+			"@earendil-works/pi-ai": ["D:/Programs/pi-web/node_modules/@earendil-works/pi-ai/dist/index.d.ts"],
+			"@juicesharp/rpiv-config": ["C:/Users/CyYu/.pi/agent/npm/node_modules/@juicesharp/rpiv-config/index.ts"]
+		}
+	},
+	"include": ["*.ts", "state/**/*.ts", "tool/**/*.ts", "view/**/*.ts"]
+}
