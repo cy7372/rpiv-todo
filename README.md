@@ -1,4 +1,42 @@
-# @juicesharp/rpiv-todo
+# cy7372/rpiv-todo — vendored fork with dancher extensions
+
+> Fork of [`@juicesharp/rpiv-todo`](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo) 2.10.0, vendored for self-maintenance (2026-09-13).
+> Upstream sync: `git remote add upstream https://github.com/juicesharp/rpiv-mono.git` (already configured); sync = fetch upstream, extract `packages/rpiv-todo`, three-way merge onto the dancher commits.
+
+**Install (pinned ref):**
+
+```sh
+pi install git:github.com/cy7372/rpiv-todo@v2.10.0-dancher.1
+```
+
+## What this fork adds on top of upstream 2.10.0
+
+Five overlay patches (2026-09-07/09-11, formerly hand-edited into `node_modules`, tracked in upstream issue #215):
+
+1. Hide the overlay the instant all alive tasks are completed (no waiting for next turn)
+2. Status-bar progress `N/M ● current-subject`
+3. One-shot all-completed toast (latch resets when new work appears)
+4. Completed lists sediment to a memory service (best-effort, silent)
+5. Fullscreen collapse to one heading line while scrolled up in history
+
+Dancher extension (2026-09-13, commit 470a885) — informed by [Ona's "rethinking the todo tool"](https://ona-frontmatter.chrprompt.com/blog/1697542992672/) post-mortem and the Claude Code / TaskTrellis feature survey:
+
+- **Priority** `P0/P1/P2` on create/update — overlay and `/todos` sort by priority within a status; P0 badge pops
+- **One-level subtasks** — `parent:#N` (validated: exists, top-level, not self); overlay nests children with `(done/total)` rollup; deleting a parent detaches children
+- **Timestamps** — `createdAt` / `completedAt` / `updatedAt` bookkeeping; `get` prints them
+- **Flexible corrections** — `deleted → pending` (undelete), `completed → in_progress/pending` (reopen)
+- **Blocked hard guard** — `in_progress`/`completed` rejected while blockers are unfinished; the error names them and teaches the fix
+- **All-done guardrail** — when a completion drains the list, the tool result itself carries "deliver the final summary now" (the classic end-of-list failure is drifting onward, not task failure)
+- **Advisory note** when completing a parent with open subtasks
+- **list filter** — case-insensitive substring over subject / description / owner
+- **Overlay heading** — 8-cell progress bar `▓▓░░░░░░ (3/7)`
+- **Robust memory-service import** — multi-candidate path probe so package relocation never silently kills sedimentation
+
+Dev: `tsc -p tsconfig.json` (type-check, paths mapped to a local pi install) · `node smoke.mjs` (25-check behavioral suite)
+
+---
+
+# @juicesharp/rpiv-todo (upstream README below)
 
 [![npm version](https://img.shields.io/npm/v/@juicesharp/rpiv-todo.svg)](https://www.npmjs.com/package/@juicesharp/rpiv-todo)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
