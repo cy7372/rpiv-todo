@@ -1,0 +1,11 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"typeRoots": ["node_modules/@types"],
+		"paths": {
+			"typebox": ["./node_modules/typebox/build/index.d.mts"],
+			"typebox/value": ["./node_modules/typebox/build/value/index.d.mts"]
+		}
+	},
+	"exclude": ["smoke.mjs", "node_modules"]
+}

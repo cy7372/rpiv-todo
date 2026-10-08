@@ -25,6 +25,10 @@ export type Op =
 			toStatus: TaskStatus;
 			changed: boolean;
 			openSubtasks?: number;
+			/** Dancher extension (2026-10-08): auto-clear-on-drain — 完成最后一个任务时连带 clear 语义（清场计数）。 */
+			autoCleared?: number;
+			/** 同上：被清场任务的 subject 列表，供 tool 层沉淀进 yinor（状态已清空，只能骑在 op 上）。 */
+			clearedSubjects?: string[];
 	  }
 	| { kind: "delete"; id: number; subject: string }
 	| { kind: "list"; statusFilter?: TaskStatus; includeDeleted: boolean; filter?: string }
@@ -282,8 +286,22 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 				if (openSubtasks === 0) openSubtasks = undefined;
 			}
 
+			// Dancher extension (2026-10-08): auto-clear-on-drain — 真实的 completed 转换把清单
+			// 的未完成工作清零时，同一 op 连带 clear 语义（tasks 清空、nextId 归 1），下一组从
+			// 白板开始（用户裁决：滚动堆积新旧清单会稀释进度视图信号）。subject 骑在 op 上，
+			// 由 todo.ts 的 execute 在状态被抹掉前负责沉淀。
+			let autoCleared: number | undefined;
+			let clearedSubjects: string[] | undefined;
+			if (changed && newStatus === "completed" && current.status !== "completed") {
+				const alive = newTasks.filter((t) => t.status !== "deleted");
+				if (alive.length > 0 && alive.every((t) => t.status === "completed")) {
+					autoCleared = alive.length;
+					clearedSubjects = alive.map((t) => t.subject);
+				}
+			}
+
 			return {
-				state: { tasks: newTasks, nextId: state.nextId },
+				state: autoCleared !== undefined ? { tasks: [], nextId: 1 } : { tasks: newTasks, nextId: state.nextId },
 				op: {
 					kind: "update",
 					id: updated.id,
@@ -291,6 +309,7 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 					toStatus: newStatus,
 					changed,
 					...(openSubtasks !== undefined ? { openSubtasks } : {}),
+					...(autoCleared !== undefined ? { autoCleared, clearedSubjects } : {}),
 				},
 			};
 		}

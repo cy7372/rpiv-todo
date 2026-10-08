@@ -45,32 +45,6 @@ function progressBar(done: number, total: number): string {
  *   - dev checkout: any ancestor .pi/agent/extensions/dancher/…
  * Falls back to the USERPROFILE-anchored absolute path. All-quiet on failure.
  */
-async function importYinorClient(): Promise<{ postEpisode: (ep: Record<string, unknown>) => Promise<unknown> } | undefined> {
-	const { existsSync } = await import("node:fs");
-	const { fileURLToPath } = await import("node:url");
-	const path = await import("node:path");
-	const here = path.dirname(fileURLToPath(import.meta.url));
-	const home = process.env.USERPROFILE ?? process.env.HOME;
-	const candidates = [
-		path.resolve(here, "../../../extensions/dancher/lib/yinor-client.js"), // npm layout
-		path.resolve(here, "../../../../extensions/dancher/lib/yinor-client.js"), // git-source clone layout
-		...(home ? [path.join(home, ".pi/agent/extensions/dancher/lib/yinor-client.js")] : []),
-	];
-	for (const candidate of candidates) {
-		try {
-			if (existsSync(candidate)) {
-				const mod = (await import(/* @vite-ignore */ candidate)) as {
-					postEpisode: (ep: Record<string, unknown>) => Promise<unknown>;
-			};
-				if (typeof mod?.postEpisode === "function") return mod;
-			}
-		} catch {
-			/* probe next */
-		}
-	}
-	return undefined;
-}
-
 export class TodoOverlay {
 	private uiCtx: ExtensionUIContext | undefined;
 	private widgetRegistered = false;
@@ -184,19 +158,9 @@ export class TodoOverlay {
 	/** 本地补丁（2026-09-07）：完成清单写入 yinor（走 lib/yinor-client 统一出口，静默尽力而为）。
 	 * 2026-09-13：import 改多候选探测，包从 npm 换 git 源安装位置变化后不再断链。 */
 	private async persistToYinor(tasks: { subject: string }[]): Promise<void> {
-		try {
-			const mod = await importYinorClient();
-			if (!mod) return;
-			const lines = tasks.map((t) => t.subject).filter(Boolean).join("；");
-			if (!lines) return;
-			await mod.postEpisode({
-				content: `todo 清单完成（${tasks.length} 项）：${lines}`,
-				source: "rpiv-todo",
-				sourceDescription: "todo 全完成时自动沉淀（本地补丁 2026-09-07）",
-			});
-		} catch {
-			/* yinor 不可用时静默跳过，绝不影响 overlay */
-		}
+		// 2026-10-08：importYinorClient/沉淀文本统一到 ./sediment.js（auto-clear 迁移时提取共享）
+		const { sedimentCompletedList } = await import("./sediment.js");
+		sedimentCompletedList(tasks.map((t) => t.subject), tasks.length);
 	}
 
 	/** 本地补丁（2026-09-07）：状态栏 todo 进度（有活跃任务时 “N/M ● 当前任务名”） */

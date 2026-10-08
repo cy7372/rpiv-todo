@@ -18,6 +18,7 @@ import { formatStatusLabel, t } from "./state/i18n-bridge.js";
 import { selectTasksByStatus, selectTodoCounts, selectVisibleTasks, sortTasksByPriority } from "./state/selectors.js";
 import { applyTaskMutation } from "./state/state-reducer.js";
 import { commitState, getRenderState, getState, sid } from "./state/store.js";
+import { sedimentCompletedList } from "./sediment.js";
 import { buildToolResult } from "./tool/response-envelope.js";
 import {
 	COMMAND_NAME,
@@ -66,7 +67,7 @@ export const DEFAULT_PROMPT_GUIDELINES: string[] = [
 	"Priority is an optional sort hint: pass priority:'P0' for urgent work, 'P2' for background work (unset = normal). The overlay and /todos order P0 first. Use P0 sparingly.",
 	"Subtasks: pass parent:#N on create (or update) to nest a task one level under #N — parent rows show a (done/total) rollup. One nesting level only; keep decomposition shallow (a handful of children).",
 	"blockedBy is enforced: update to in_progress or completed is rejected while blockers are unfinished. Finish or delete the blockers, or removeBlockedBy if the dependency is stale.",
-	"Status corrections are cheap: completed → in_progress reopens a prematurely completed task; deleted → pending revives a tombstone. When the last unfinished task is completed the tool result says so — deliver the final summary immediately and stop.",
+	"Status corrections are cheap: completed → in_progress reopens a prematurely completed task; deleted → pending revives a tombstone. When the last unfinished task is completed the tool result says so, the list auto-clears (subjects sedimented to memory), and you deliver the final summary immediately — recreate tasks if follow-up work appears.",
 ];
 
 export function registerTodoTool(pi: ExtensionAPI): void {
@@ -75,7 +76,7 @@ export function registerTodoTool(pi: ExtensionAPI): void {
 		name: TOOL_NAME,
 		label: TOOL_LABEL,
 		description:
-			"Manage a task list for tracking multi-step progress. Actions: create (new task), update (change status/fields/dependencies), list (all tasks, optionally filtered by status or free text), get (single task details), delete (tombstone), clear (reset all). Status: pending → in_progress → completed, plus deleted tombstone (revivable). Optional priority (P0/P1/P2) and one-level subtasks (parent). blockedBy dependencies are enforced. Use this to plan and track multi-step work like research, design, and implementation.",
+			"Manage a task list for tracking multi-step progress. Actions: create (new task), update (change status/fields/dependencies), list (all tasks, optionally filtered by status or free text), get (single task details), delete (tombstone), clear (reset all). Status: pending → in_progress → completed, plus deleted tombstone (revivable). Optional priority (P0/P1/P2) and one-level subtasks (parent). blockedBy dependencies are enforced. When the last unfinished task is completed the list auto-clears (subjects sedimented to memory) so the next group starts fresh. Use this to plan and track multi-step work like research, design, and implementation.",
 		promptSnippet: guidance.promptSnippet ?? DEFAULT_PROMPT_SNIPPET,
 		promptGuidelines: guidance.promptGuidelines ?? DEFAULT_PROMPT_GUIDELINES,
 		parameters: TodoParamsSchema,
@@ -83,6 +84,11 @@ export function registerTodoTool(pi: ExtensionAPI): void {
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const result = applyTaskMutation(getState(sid(ctx)), params.action, params as TaskMutationParams);
 			commitState(sid(ctx), result.state);
+			// Dancher extension (2026-10-08)：auto-clear-on-drain 的沉淀钩子。状态已被 reducer
+			// 清空，subject 只存在于 op 上；沉淀失败静默（尽力而为，绝不阻断工具返回）。
+			if (result.op.kind === "update" && result.op.autoCleared !== undefined && result.op.clearedSubjects) {
+				sedimentCompletedList(result.op.clearedSubjects, result.op.autoCleared);
+			}
 			return buildToolResult(params.action, params as TaskMutationParams, result.state, result.op);
 		},
 

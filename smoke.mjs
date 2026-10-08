@@ -1,10 +1,30 @@
 // Smoke test: drive the reducer + response envelope through the same jiti
 // transform pi uses at runtime. Run: node smoke.mjs
-const { createJiti } = await import("file:///D:/Programs/pi-web/node_modules/jiti/lib/jiti-static.mjs");
+//
+// 2026-10-08 可移植化：jiti/typebox 按候选探测（本仓 node_modules → pandar 共享内核
+// releases → Windows 开发机 D: 盘旧布局），不再硬编码单一路径，任何 dancher 机能跑。
+const { existsSync, readdirSync } = await import("node:fs");
+const { fileURLToPath } = await import("node:url");
+const nodePath = await import("node:path");
+const HERE = nodePath.dirname(fileURLToPath(new URL(".", import.meta.url)));
 
+function probe(rel) {
+	const candidates = [nodePath.resolve(HERE, "node_modules", rel), `D:/Programs/pi-web/node_modules/${rel}`];
+	const kernelRoot = "/opt/dancher/pi/install/releases";
+	if (existsSync(kernelRoot)) {
+		for (const ver of readdirSync(kernelRoot).sort().reverse()) {
+			candidates.push(nodePath.join(kernelRoot, ver, "node_modules", rel));
+		}
+	}
+	const hit = candidates.find((p) => existsSync(p));
+	if (!hit) throw new Error(`smoke.mjs: 找不到 ${rel}（探测过 ${candidates.length} 个候选）`);
+	return hit;
+}
+
+const { createJiti } = await import(probe("jiti/lib/jiti-static.mjs"));
 const jiti = createJiti(import.meta.url, {
 	alias: {
-		typebox: "D:/Programs/pi-web/node_modules/typebox/build/index.mjs",
+		typebox: probe("typebox/build/index.mjs"),
 		"../tool/types.js": new URL("./tool/types.ts", import.meta.url).href,
 	},
 });
@@ -86,17 +106,34 @@ check("not all done → no suffix", !text.includes("deliver the final summary"))
 r = run("update", { id: 2, status: "completed" });
 text = formatContent(r.op, state);
 check("still not all done", !text.includes("deliver the final summary"));
-r = run("update", { id: 3, status: "completed" });
-text = formatContent(r.op, state);
-check("all done → summary instruction", text.includes("All tasks are now completed"));
 
-// filter
+// filter（必须在 drain 之前跑：auto-clear 会清场，见下）
 r = run("list", { filter: "tests" });
 text = formatContent(r.op, state);
 check("filter 'tests' matches subject+description", text.split("\n").length === 2 && text.includes("#1") && text.includes("#2"));
 r = run("list", { filter: "ALICE" });
 text = formatContent(r.op, state);
 check("filter case-insensitive owner", text.includes("#3") && text.split("\n").length === 1);
+
+// auto-clear-on-drain（2026-10-08）：完成最后一个任务 → 同 op 连带 clear 语义
+r = run("update", { id: 3, status: "completed" });
+text = formatContent(r.op, state);
+check("all done → summary instruction", text.includes("All tasks are now completed"));
+check(
+	"auto-clear: op 携带计数与 subjects",
+	r.op.kind === "update" && r.op.autoCleared === 3 && Array.isArray(r.op.clearedSubjects) && r.op.clearedSubjects.length === 3,
+	JSON.stringify(r.op),
+);
+check("auto-clear: 清单已清空、nextId 归 1", state.tasks.length === 0 && state.nextId === 1);
+check("auto-clear: 尾注提示清场", text.includes("auto-cleared"));
+
+// 清场后开新组：id 从 1 重新起算；单任务组 drain 同样触发
+r = run("create", { subject: "new group task" });
+check("post-clear create restarts ids", r.op.kind === "create" && r.op.taskId === 1);
+r = run("update", { id: 1, status: "completed" });
+check("single-task drain also auto-clears", r.op.kind === "update" && r.op.autoCleared === 1);
+r = run("list", {});
+check("post-drain list is empty", formatContent(r.op, state) === "No tasks");
 
 // priority sort + subtask interleave in overlay layout
 const { selectOverlayLayout } = await jiti.import("./state/selectors.ts", { default: false });

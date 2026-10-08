@@ -89,6 +89,14 @@ const ALL_DONE_SUFFIX =
 	"\nAll tasks are now completed — deliver the final summary to the user now (results, deviations, follow-ups). Do not start new work without new instructions.";
 
 /**
+ * Dancher extension (2026-10-08): auto-clear-on-drain 尾注。清场后 allDone(state)
+ * 恒为 false（清单已空），所以 drain 判定改骑 op.autoCleared，旧条件仅作升级前遗留
+ * 状态（已持久化的全完成清单）的兑底提示。
+ */
+const AUTO_CLEAR_SUFFIX = (count: number) =>
+	`\nList auto-cleared (${count} completed tasks dropped, subjects sedimented to memory) so the next group starts fresh — create new tasks if follow-up work appears.`;
+
+/**
  * Pure formatter: `(op, state) → string`. Closed switch on `op.kind` —
  * adding a new `Op` variant fails to compile here until a branch is added.
  * The strings on each branch are byte-equivalent to pre-refactor `todo.ts`
@@ -112,7 +120,9 @@ export function formatContent(op: Op, state: TaskState): string {
 			if (op.openSubtasks !== undefined) {
 				text += `\nNote: #${op.id} has ${op.openSubtasks} unfinished subtask(s) — complete or delete them, or fold their state into the summary.`;
 			}
-			if (op.toStatus === "completed" && allDone(state)) {
+			if (op.toStatus === "completed" && op.autoCleared !== undefined) {
+				text += ALL_DONE_SUFFIX + AUTO_CLEAR_SUFFIX(op.autoCleared);
+			} else if (op.toStatus === "completed" && allDone(state)) {
 				text += ALL_DONE_SUFFIX;
 			}
 			return text;
