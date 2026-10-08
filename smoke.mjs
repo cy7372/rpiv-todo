@@ -120,8 +120,8 @@ r = run("update", { id: 3, status: "completed" });
 text = formatContent(r.op, state);
 check("all done → summary instruction", text.includes("All tasks are now completed"));
 check(
-	"auto-clear: op 携带计数与 subjects",
-	r.op.kind === "update" && r.op.autoCleared === 3 && Array.isArray(r.op.clearedSubjects) && r.op.clearedSubjects.length === 3,
+	"auto-clear: op 携带计数与任务详情",
+	r.op.kind === "update" && r.op.autoCleared === 3 && Array.isArray(r.op.clearedTasks) && r.op.clearedTasks.length === 3 && r.op.clearedTasks.every((t) => typeof t.subject === "string"),
 	JSON.stringify(r.op),
 );
 check("auto-clear: 清单已清空、nextId 归 1", state.tasks.length === 0 && state.nextId === 1);
@@ -132,8 +132,40 @@ r = run("create", { subject: "new group task" });
 check("post-clear create restarts ids", r.op.kind === "create" && r.op.taskId === 1);
 r = run("update", { id: 1, status: "completed" });
 check("single-task drain also auto-clears", r.op.kind === "update" && r.op.autoCleared === 1);
+
 r = run("list", {});
 check("post-drain list is empty", formatContent(r.op, state) === "No tasks");
+
+// waiting-user / blocked（2026-10-08）：新状态合法转移 + 不算完成
+state = { tasks: [], nextId: 1 };
+run("create", { subject: "waits on user" }); // #1
+run("create", { subject: "external stall" }); // #2
+r = run("update", { id: 1, status: "waiting-user" });
+check("pending → waiting-user ok", r.op.kind === "update" && r.op.toStatus === "waiting-user");
+r = run("update", { id: 2, status: "blocked" });
+check("pending → blocked ok", r.op.kind === "update" && r.op.toStatus === "blocked");
+r = run("update", { id: 1, status: "completed" });
+check("waiting-user → completed ok", r.op.kind === "update" && r.op.changed === true);
+check("waiting/blocked 任务未全完成 → 不清场", state.tasks.length === 2);
+r = run("update", { id: 2, status: "completed" });
+check("最后 blocked 完成后仍触发清场", r.op.kind === "update" && r.op.autoCleared === 2);
+
+// completed → waiting-user 非法（重开须先经 in_progress/pending）
+state = { tasks: [], nextId: 1 };
+run("create", { subject: "done thing" });
+run("update", { id: 1, status: "completed" });
+r = run("update", { id: 1, status: "waiting-user" });
+check("completed → waiting-user rejected", r.op.kind === "error");
+
+// autoClearOnDrain: false（2026-10-08）：关开关保留旧行为
+state = { tasks: [], nextId: 1 };
+run("create", { subject: "keep me" });
+let saved = applyTaskMutation(state, "update", { action: "update", id: 1, status: "completed" }, { autoClearOnDrain: false });
+state = saved.state;
+check(
+	"autoClearOnDrain:false 不清场，all-done 兜底提示仍在",
+	state.tasks.length === 1 && state.tasks[0].status === "completed" && formatContent(saved.op, state).includes("All tasks are now completed"),
+);
 
 // priority sort + subtask interleave in overlay layout
 const { selectOverlayLayout } = await jiti.import("./state/selectors.ts", { default: false });

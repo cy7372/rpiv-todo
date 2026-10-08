@@ -36,18 +36,42 @@ export async function importYinorClient(): Promise<YinorClient | undefined> {
 	return undefined;
 }
 
+export interface SedimentedTask {
+	id: number;
+	subject: string;
+	description?: string;
+	createdAt?: number;
+	completedAt?: number;
+}
+
+/** 2026-10-08 沉淀增强：带 description 与每项完成耗时，清场后这里是唯一备份。 */
+function formatTaskLine(t: SedimentedTask, index: number): string {
+	const parts: string[] = [];
+	if (t.createdAt !== undefined && t.completedAt !== undefined) {
+		const ms = t.completedAt - t.createdAt;
+		if (Number.isFinite(ms) && ms >= 0) {
+			const minutes = Math.round(ms / 60000);
+			parts.push(minutes >= 60 ? `${(minutes / 60).toFixed(1)}h` : `${minutes}m`);
+		}
+	}
+	let line = `${index + 1}. ${t.subject}`;
+	if (parts.length > 0) line += `（${parts[0]}）`;
+	if (t.description) line += ` — ${t.description.slice(0, 80)}`;
+	return line;
+}
+
 /** 完成清单写入 yinor（走 lib/yinor-client 统一出口）。fire-and-forget：绝不影响工具主流程。 */
-export function sedimentCompletedList(subjects: string[], taskCount: number): void {
+export function sedimentCompletedList(tasks: SedimentedTask[]): void {
 	void (async () => {
 		try {
+			if (tasks.length === 0) return;
 			const mod = await importYinorClient();
 			if (!mod) return;
-			const lines = subjects.filter(Boolean).join("；");
-			if (!lines) return;
+			const body = tasks.map(formatTaskLine).join("\n");
 			await mod.postEpisode({
-				content: `todo 清单完成（${taskCount} 项）：${lines}`,
+				content: `todo 清单完成（${tasks.length} 项）：\n${body}`,
 				source: "rpiv-todo",
-				sourceDescription: "todo 全完成自动清场时沉淀（2026-09-07 起，2026-10-08 随 auto-clear 迁至 tool 层）",
+				sourceDescription: "todo 全完成自动清场时沉淀（2026-09-07 起，2026-10-08 随 auto-clear 迁至 tool 层并增强详情）",
 			});
 		} catch {
 			/* yinor 不可用时静默跳过 */

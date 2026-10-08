@@ -28,6 +28,7 @@ import {
 	clearActiveRenderSession,
 	evictSession,
 	getActiveRenderSession,
+	consumeLastDrainEvent,
 	getRenderState,
 	replaceState,
 	setActiveRenderSession,
@@ -134,6 +135,7 @@ export default function (pi: ExtensionAPI, importOverlay: TodoOverlayImporter = 
 	async function updateTodoOverlay(
 		resetCompletedDisplayState = false,
 		generation = lifecycleGeneration,
+		drainCount?: number,
 	): Promise<void> {
 		const hasVisibleTasks = getRenderState().tasks.some((task) => task.status !== "deleted");
 		if (!uiCtx || (!todoOverlay && !hasVisibleTasks)) return;
@@ -144,7 +146,7 @@ export default function (pi: ExtensionAPI, importOverlay: TodoOverlayImporter = 
 		todoOverlay ??= new TodoOverlay();
 		todoOverlay.setUICtx(uiCtx);
 		if (resetCompletedDisplayState) todoOverlay.resetCompletedDisplayState();
-		todoOverlay.update();
+		todoOverlay.update(drainCount);
 	}
 
 	registerTodoTool(pi);
@@ -263,8 +265,11 @@ export default function (pi: ExtensionAPI, importOverlay: TodoOverlayImporter = 
 	// (branch is stale — message_end runs after tool_execution_end).
 	pi.on("tool_execution_end", async (event) => {
 		if (event.toolName !== TOOL_NAME || event.isError) return;
+		// Dancher extension (2026-10-08)：消费 drain 事件槽 → overlay 正反馈 toast
+		// （沉淀已在 tool 层完成，overlay 只负责 toast，不重复沉淀）。
+		const drainCount = consumeLastDrainEvent();
 		try {
-			await updateTodoOverlay();
+			await updateTodoOverlay(false, lifecycleGeneration, drainCount);
 		} catch (e) {
 			// The tool itself succeeded — a transient overlay-load failure only
 			// costs this one refresh, and the loader's cleared memo lets the next

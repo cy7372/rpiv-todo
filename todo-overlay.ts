@@ -66,7 +66,7 @@ export class TodoOverlay {
 		}
 	}
 
-	update(): void {
+	update(drainCount?: number): void {
 		if (!this.uiCtx) return;
 		const snapshot = this.getSnapshot();
 		const alive = snapshot.tasks.filter((task) => task.status !== "deleted");
@@ -78,6 +78,12 @@ export class TodoOverlay {
 		const visible = this.selectOverlayTasks(snapshot);
 
 		if (visible.length === 0) {
+			// Dancher extension (2026-10-08)：auto-clear-on-drain 后清单瞬间清空，
+			// 原全完成 toast 路径永远看不到 alive>0，改由 index.ts 从 drain 事件槽
+			// 传入计数——widgetRegistered 佐证本会话观察到过任务，才弹正反馈。
+			if (drainCount !== undefined && this.widgetRegistered) {
+				this.toastDrain(drainCount);
+			}
 			// 本地补丁（2026-09-07）：全完成转换瞬间（widgetRegistered 佐证本会话观察到过未完成态，
 			// replay 恢复即全完成的场景不触发）→ toast 正反馈 + yinor 沉淀，各一次
 			if (
@@ -145,6 +151,15 @@ export class TodoOverlay {
 		return this.widgetRegistered;
 	}
 
+	/** Dancher extension (2026-10-08)：drain 清场 toast（沉淀已在 tool 层，这里只做正反馈） */
+	private toastDrain(count: number): void {
+		try {
+			this.uiCtx?.notify?.(`✓ Todos 全部完成（${count} 项），清单已自动清场`, "info");
+		} catch {
+			/* toast 失败不影响主流程 */
+		}
+	}
+
 	/** 本地补丁（2026-09-07）：全部完成瞬间的一次性正反馈（toast）+ 记忆沉淀（yinor） */
 	private fireAllCompleted(tasks: { id: number; subject: string }[]): void {
 		try {
@@ -157,10 +172,10 @@ export class TodoOverlay {
 
 	/** 本地补丁（2026-09-07）：完成清单写入 yinor（走 lib/yinor-client 统一出口，静默尽力而为）。
 	 * 2026-09-13：import 改多候选探测，包从 npm 换 git 源安装位置变化后不再断链。 */
-	private async persistToYinor(tasks: { subject: string }[]): Promise<void> {
+	private async persistToYinor(tasks: { id: number; subject: string }[]): Promise<void> {
 		// 2026-10-08：importYinorClient/沉淀文本统一到 ./sediment.js（auto-clear 迁移时提取共享）
 		const { sedimentCompletedList } = await import("./sediment.js");
-		sedimentCompletedList(tasks.map((t) => t.subject), tasks.length);
+		sedimentCompletedList(tasks.map((t) => ({ id: t.id, subject: t.subject })));
 	}
 
 	/** 本地补丁（2026-09-07）：状态栏 todo 进度（有活跃任务时 “N/M ● 当前任务名”） */

@@ -1,6 +1,8 @@
 {
   "status.pending": "pending",
   "status.in_progress": "in progress",
+  "status.waiting-user": "waiting for user",
+  "status.blocked": "blocked",
   "status.completed": "completed",
   "status.deleted": "deleted",
 

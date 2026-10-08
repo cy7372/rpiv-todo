@@ -17,6 +17,8 @@ export { formatStatusLabel };
 export const STATUS_GLYPH: Record<TaskStatus, string> = {
 	pending: "○",
 	in_progress: "◐",
+	"waiting-user": "◔",
+	blocked: "∅",
 	completed: "●",
 	deleted: "⊘",
 };
@@ -26,9 +28,11 @@ export const STATUS_GLYPH: Record<TaskStatus, string> = {
  * successful delete is visually distinct from the error branch (which uses
  * `error` + `✗`)..
  */
-export const STATUS_COLOR: Record<TaskStatus, "dim" | "warning" | "success" | "muted"> = {
+export const STATUS_COLOR: Record<TaskStatus, "dim" | "warning" | "success" | "muted" | "accent" | "error"> = {
 	pending: "dim",
 	in_progress: "warning",
+	"waiting-user": "accent",
+	blocked: "error",
 	completed: "success",
 	deleted: "muted",
 };
@@ -56,6 +60,10 @@ export function overlayStatusGlyph(status: TaskStatus, theme: Theme): string {
 	switch (status) {
 		case "pending":
 			return theme.fg("dim", "○");
+		case "waiting-user":
+			return theme.fg("accent", "◔");
+		case "blocked":
+			return theme.fg("error", "∅");
 		case "in_progress":
 			return theme.fg("warning", "◐");
 		case "completed":

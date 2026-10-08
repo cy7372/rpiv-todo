@@ -27,8 +27,8 @@ export type Op =
 			openSubtasks?: number;
 			/** Dancher extension (2026-10-08): auto-clear-on-drain — 完成最后一个任务时连带 clear 语义（清场计数）。 */
 			autoCleared?: number;
-			/** 同上：被清场任务的 subject 列表，供 tool 层沉淀进 yinor（状态已清空，只能骑在 op 上）。 */
-			clearedSubjects?: string[];
+			/** 同上：被清场任务详情（subject/description/时间戳），供 tool 层沉淀进 yinor（状态已清空，只能骑在 op 上）。 */
+			clearedTasks?: { id: number; subject: string; description?: string; createdAt?: number; completedAt?: number }[];
 	  }
 	| { kind: "delete"; id: number; subject: string }
 	| { kind: "list"; statusFilter?: TaskStatus; includeDeleted: boolean; filter?: string }
@@ -129,7 +129,17 @@ function taskChanged(before: Task, after: Task): boolean {
  * at replay time, which is acceptable because they are informational only
  * (the persisted `details.tasks` snapshot remains the source of truth).
  */
-export function applyTaskMutation(state: TaskState, action: TaskAction, params: TaskMutationParams): ApplyResult {
+export interface MutationOptions {
+	/** Dancher extension (2026-10-08)：auto-clear-on-drain 开关，缺省 true（todo.ts execute 读 config 传入）。 */
+	autoClearOnDrain?: boolean;
+}
+
+export function applyTaskMutation(
+	state: TaskState,
+	action: TaskAction,
+	params: TaskMutationParams,
+	options: MutationOptions = {},
+): ApplyResult {
 	switch (action) {
 		case "create": {
 			if (!params.subject?.trim()) {
@@ -291,12 +301,23 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 			// 白板开始（用户裁决：滚动堆积新旧清单会稀释进度视图信号）。subject 骑在 op 上，
 			// 由 todo.ts 的 execute 在状态被抹掉前负责沉淀。
 			let autoCleared: number | undefined;
-			let clearedSubjects: string[] | undefined;
-			if (changed && newStatus === "completed" && current.status !== "completed") {
+			let clearedTasks: NonNullable<Extract<Op, { kind: "update" }>["clearedTasks"]> | undefined;
+			if (
+				options.autoClearOnDrain !== false &&
+				changed &&
+				newStatus === "completed" &&
+				current.status !== "completed"
+			) {
 				const alive = newTasks.filter((t) => t.status !== "deleted");
 				if (alive.length > 0 && alive.every((t) => t.status === "completed")) {
 					autoCleared = alive.length;
-					clearedSubjects = alive.map((t) => t.subject);
+					clearedTasks = alive.map((t) => ({
+						id: t.id,
+						subject: t.subject,
+						...(t.description !== undefined ? { description: t.description } : {}),
+						...(t.createdAt !== undefined ? { createdAt: t.createdAt } : {}),
+						...(t.completedAt !== undefined ? { completedAt: t.completedAt } : {}),
+					}));
 				}
 			}
 
@@ -309,7 +330,7 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 					toStatus: newStatus,
 					changed,
 					...(openSubtasks !== undefined ? { openSubtasks } : {}),
-					...(autoCleared !== undefined ? { autoCleared, clearedSubjects } : {}),
+					...(autoCleared !== undefined ? { autoCleared, clearedTasks } : {}),
 				},
 			};
 		}

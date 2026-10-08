@@ -3,6 +3,8 @@
 
   "status.pending": "pendientes",
   "status.in_progress": "en curso",
+  "status.waiting-user": "esperando al usuario",
+  "status.blocked": "bloqueada",
   "status.completed": "completadas",
   "status.deleted": "eliminada",
 

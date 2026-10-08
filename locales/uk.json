@@ -3,6 +3,8 @@
 
   "status.pending": "очікування",
   "status.in_progress": "у роботі",
+  "status.waiting-user": "очікує на користувача",
+  "status.blocked": "заблоковано",
   "status.completed": "виконано",
   "status.deleted": "видалено",
 

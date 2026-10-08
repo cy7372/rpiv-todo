@@ -3,6 +3,8 @@
 
   "status.pending": "待处理",
   "status.in_progress": "进行中",
+  "status.waiting-user": "等用户",
+  "status.blocked": "受阻",
   "status.completed": "已完成",
   "status.deleted": "已删除",
 

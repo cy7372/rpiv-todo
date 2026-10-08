@@ -6,6 +6,10 @@ import type { TaskStatus } from "../tool/types.js";
  * Dancher extension (2026-09-13) vs upstream 2.10.0:
  * - `deleted` is no longer terminal: deleted → pending revives a tombstoned
  *   task (undelete) with its id, subject, and dependencies intact.
+ * - `waiting-user` (stalled on a user decision, 2026-10-08) and `blocked`
+ *   (stalled on something external) are first-class statuses; both can resume
+ *   into pending/in_progress or jump straight to completed when the stall
+ *   resolves itself.
  * - `completed` can reopen: completed → in_progress and completed → pending
  *   recover from premature completion (e.g. tests failed after marking done).
  * The one-way discipline stays as *guidance*; the state machine now trusts
@@ -15,8 +19,10 @@ import type { TaskStatus } from "../tool/types.js";
  * table only enumerates actual transitions.
  */
 export const VALID_TRANSITIONS: Record<TaskStatus, ReadonlySet<TaskStatus>> = {
-	pending: new Set(["in_progress", "completed", "deleted"]),
-	in_progress: new Set(["pending", "completed", "deleted"]),
+	pending: new Set(["in_progress", "waiting-user", "blocked", "completed", "deleted"]),
+	in_progress: new Set(["pending", "waiting-user", "blocked", "completed", "deleted"]),
+	"waiting-user": new Set(["pending", "in_progress", "blocked", "completed", "deleted"]),
+	blocked: new Set(["pending", "in_progress", "waiting-user", "completed", "deleted"]),
 	completed: new Set(["deleted", "in_progress", "pending"]),
 	deleted: new Set(["pending"]),
 };

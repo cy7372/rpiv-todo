@@ -5,6 +5,12 @@ interface TodoConfig {
 	guidance?: GuidanceFields;
 	maxWidgetLines?: number;
 	/**
+	 * Dancher extension (2026-10-08): when true (default), completing the last
+	 * unfinished task clears the list automatically so the next group starts
+	 * fresh. Set false to keep the old behavior (completed rows linger).
+	 */
+	autoClearOnDrain?: boolean;
+	/**
 	 * Key spec for the overlay collapse/expand shortcut, in the same format as
 	 * pi-coding-agent keybinding ids (`modifier+key`, e.g. `ctrl+shift+t`, `alt+o`).
 	 * Defaults to `"ctrl+shift+t"`. Pass `"off"` to disable the collapse shortcut
@@ -99,3 +105,8 @@ export function resolveCollapseKey(): CollapseKeySpec {
 }
 
 export { validateGuidanceFields };
+
+/** Auto-clear-on-drain switch, read fresh per mutation. Default true. */
+export function getAutoClearOnDrain(): boolean {
+	return loadConfig().autoClearOnDrain !== false;
+}

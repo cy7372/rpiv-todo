@@ -20,6 +20,11 @@ Five overlay patches (2026-09-07/09-11, formerly hand-edited into `node_modules`
 5. Fullscreen collapse to one heading line while scrolled up in history
 
 - **Auto-clear on drain** (2026-10-08) — completing the last unfinished task folds `clear` semantics into the same op (list wiped, ids restart at 1); the tool result says so and the completed subjects are sedimented to the memory service by the tool layer (TUI & headless), replacing the overlay-only hook.
+- **waiting-user / blocked statuses** (2026-10-08) — first-class stalls (user decision vs external); both keep the group alive so auto-clear never fires while one lingers
+- **autoClearOnDrain config** (2026-10-08) — set `false` in `~/.config/rpiv-todo/config.json` to keep completed rows lingering (old behavior); read per mutation, no `/reload` needed
+- **Drain toast** (2026-10-08) — the TUI toast survives auto-clear via a drain-event handshake (tool layer sediments, overlay only toasts)
+- **Rich sediment** (2026-10-08) — completed lists sediment with per-task description and turnaround time (createdAt → completedAt)
+
 Dancher extension (2026-09-13, commit 470a885) — informed by [Ona's "rethinking the todo tool"](https://ona-frontmatter.chrprompt.com/blog/1697542992672/) post-mortem and the Claude Code / TaskTrellis feature survey:
 
 - **Priority** `P0/P1/P2` on create/update — overlay and `/todos` sort by priority within a status; P0 badge pops

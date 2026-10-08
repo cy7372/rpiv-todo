@@ -119,7 +119,27 @@ export function clearActiveRenderSession(): void {
  * `test/setup.ts` edit needed. Clears BOTH the session Map and the render
  * pointer so filesystem/detect resets start from a clean state.
  */
+/**
+ * Dancher extension (2026-10-08): one-slot drain event for the TUI toast
+ * handshake — `todo.ts` execute sets it when a completion auto-clears the
+ * list; `index.ts` consumes it on `tool_execution_end` in the same turn and
+ * passes the count to the overlay. Module-level single slot is fine: both
+ * ends run in the tool-result turn of the same session.
+ */
+let lastDrainEvent: number | undefined;
+
+export function setLastDrainEvent(count: number): void {
+	lastDrainEvent = count;
+}
+
+export function consumeLastDrainEvent(): number | undefined {
+	const value = lastDrainEvent;
+	lastDrainEvent = undefined;
+	return value;
+}
+
 export function __resetState(): void {
 	sessions.clear();
 	activeRenderSession = "";
+	lastDrainEvent = undefined;
 }
