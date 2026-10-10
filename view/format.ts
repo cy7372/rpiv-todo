@@ -39,7 +39,7 @@ export const STATUS_COLOR: Record<TaskStatus, "dim" | "warning" | "success" | "m
 
 /**
  * Per-action prefix glyph for renderCall. `+` create, `→` update, `×` delete,
- * `›` get, `☰` list, `∅` clear..
+ * `›` get, `☰` list, `∅` clear, `⊞` plan (batch of items, 2026-10-10).
  */
 export const ACTION_GLYPH: Record<TaskAction, string> = {
 	create: "+",
@@ -48,6 +48,7 @@ export const ACTION_GLYPH: Record<TaskAction, string> = {
 	get: "›",
 	list: "☰",
 	clear: "∅",
+	plan: "⊞",
 };
 
 /**
@@ -149,6 +150,10 @@ export function renderTodoCall(
 
 	if (args.action === "create" && args.subject) {
 		text += ` ${theme.fg("dim", sanitizeTerminalText(args.subject))}`;
+	} else if (args.action === "plan" && Array.isArray(args.items) && args.items.length > 0) {
+		// Dancher extension (2026-10-10): 批量建轴调用行——`N× 首条主题`，不逐项铺屏。
+		const first = String(args.items[0]?.subject ?? "");
+		text += ` ${theme.fg("dim", `${args.items.length}×`)} ${theme.fg("accent", sanitizeTerminalText(first))}`;
 	} else if (
 		(args.action === "update" || args.action === "get" || args.action === "delete") &&
 		args.id !== undefined

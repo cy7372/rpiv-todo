@@ -57,6 +57,7 @@ export { TOOL_NAME } from "./tool/types.js";
 export const DEFAULT_PROMPT_SNIPPET = "Manage a task list to track multi-step progress";
 export const DEFAULT_PROMPT_GUIDELINES: string[] = [
 	"Use `todo` for complex work with 3+ steps, when the user gives you a list of tasks, or immediately after receiving new instructions to capture requirements. Skip it for single trivial tasks and purely conversational requests.",
+	"When starting multi-step work, build the whole axis in ONE call: action plan with items:[{subject, key, dependsOn:[keys], priority, parent}] (max 25 items). Give each item a batch-local key and wire dependencies via dependsOn — the response returns the id↔key map. Reserve serial create for appending a single task to an existing list.",
 	"When starting a task from the todo list, mark it in_progress BEFORE beginning work. Mark it completed IMMEDIATELY when done — never batch completions. Exactly one task in_progress at a time.",
 	"Never mark a task completed if tests are failing, the implementation is partial, or you hit unresolved errors — keep it in_progress and create a new task for the blocker instead.",
 	"Task status is a 4-state machine: pending → in_progress → completed, plus deleted as a tombstone. Pass activeForm (present-continuous label, e.g. 'researching existing tool') when marking in_progress.",
@@ -77,7 +78,7 @@ export function registerTodoTool(pi: ExtensionAPI): void {
 		name: TOOL_NAME,
 		label: TOOL_LABEL,
 		description:
-			"Manage a task list for tracking multi-step progress. Actions: create (new task), update (change status/fields/dependencies), list (all tasks, optionally filtered by status or free text), get (single task details), delete (tombstone), clear (reset all). Status: pending → in_progress → completed, plus deleted tombstone (revivable). Optional priority (P0/P1/P2) and one-level subtasks (parent). blockedBy dependencies are enforced. When the last unfinished task is completed the list auto-clears (subjects sedimented to memory) so the next group starts fresh. Use this to plan and track multi-step work like research, design, and implementation.",
+			"Manage a task list for tracking multi-step progress. Actions: plan (batch-create a whole axis in one call — items[] with optional key/dependsOn/priority/parent wiring), create (new task), update (change status/fields/dependencies), list (all tasks, optionally filtered by status or free text; in_progress rows idle >2h carry a ⏳ age hint), get (single task details), delete (tombstone), clear (reset all). Status: pending → in_progress → completed, plus deleted tombstone (revivable). Optional priority (P0/P1/P2) and one-level subtasks (parent). blockedBy dependencies are enforced. When the last unfinished task is completed the list auto-clears (subjects sedimented to memory) so the next group starts fresh. Use this to plan and track multi-step work like research, design, and implementation.",
 		promptSnippet: guidance.promptSnippet ?? DEFAULT_PROMPT_SNIPPET,
 		promptGuidelines: guidance.promptGuidelines ?? DEFAULT_PROMPT_GUIDELINES,
 		parameters: TodoParamsSchema,

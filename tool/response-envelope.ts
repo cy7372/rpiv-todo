@@ -25,13 +25,34 @@ function formatTs(ts: number | undefined): string | undefined {
  * formatting paths use `view/format.ts` for richer presentations.
  *
  * Dancher extension (2026-09-13): `P0/P1/P2` prefix badge and `↳#parent` suffix.
+ * Dancher extension (2026-10-10): in_progress 行挂超 2h 追加 `⏳ Nh since last
+ * update` 年龄提示——waiting-user/blocked 是设计性驻留不提示。`now` 由调用方
+ * 注入（可测试性），缺省墙钟。
  */
-function formatListLine(t: Task): string {
+const STALE_HINT_MS = 2 * 60 * 60 * 1000;
+
+function formatAge(ms: number): string {
+	const h = ms / 3_600_000;
+	if (h >= 10) return `${Math.round(h)}h`;
+	if (h >= 1) return `${h.toFixed(1)}h`;
+	return `${Math.max(1, Math.round(ms / 60_000))}m`;
+}
+
+function staleSuffix(t: Task, now: number): string {
+	if (t.status !== "in_progress") return "";
+	const since = t.updatedAt ?? t.createdAt;
+	if (since === undefined) return "";
+	const ms = now - since;
+	if (ms < STALE_HINT_MS) return "";
+	return ` ⏳ ${formatAge(ms)} since last update`;
+}
+
+function formatListLine(t: Task, now: number): string {
 	const badge = priorityBadge(t.priority);
 	const block = t.blockedBy?.length ? ` ⛓ ${t.blockedBy.map((id) => `#${id}`).join(",")}` : "";
 	const parent = t.parent !== undefined ? ` ↳#${t.parent}` : "";
 	const form = t.status === "in_progress" && t.activeForm ? ` (${sanitizeTerminalText(t.activeForm)})` : "";
-	return `[${t.status}] ${badge}#${t.id} ${sanitizeTerminalText(t.subject)}${form}${block}${parent}`;
+	return `[${t.status}] ${badge}#${t.id} ${sanitizeTerminalText(t.subject)}${form}${block}${parent}${staleSuffix(t, now)}`;
 }
 
 /**
@@ -41,7 +62,7 @@ function formatListLine(t: Task): string {
  * byte-equivalent. The 2026-09-13 rows (priority, parent, created, completed)
  * append after `owner` to keep that guarantee.
  */
-function formatGetLines(task: Task, state: TaskState): string {
+function formatGetLines(task: Task, state: TaskState, now: number): string {
 	const blocks = deriveBlocks(state.tasks).get(task.id) ?? [];
 	const lines = [`#${task.id} [${task.status}] ${priorityBadge(task.priority)}${sanitizeTerminalText(task.subject)}`];
 	if (task.description) lines.push(`  description: ${sanitizeTerminalText(task.description)}`);
@@ -61,6 +82,11 @@ function formatGetLines(task: Task, state: TaskState): string {
 	if (created) lines.push(`  created: ${created}`);
 	const done = formatTs(task.completedAt);
 	if (done) lines.push(`  completed: ${done}`);
+	// Dancher extension (2026-10-10): updated 时间戳 + in_progress 陈旧提示（与 list 的 ⏳ 同一判据）。
+	if (task.updatedAt !== undefined && task.status === "in_progress") {
+		const stale = staleSuffix(task, now);
+		lines.push(`  updated: ${formatTs(task.updatedAt)}${stale}`);
+	}
 	return lines.join("\n");
 }
 
@@ -102,7 +128,7 @@ const AUTO_CLEAR_SUFFIX = (count: number) =>
  * The strings on each branch are byte-equivalent to pre-refactor `todo.ts`
  * reducer output (dancher extensions noted inline).
  */
-export function formatContent(op: Op, state: TaskState): string {
+export function formatContent(op: Op, state: TaskState, now: number = Date.now()): string {
 	switch (op.kind) {
 		case "create": {
 			const t = state.tasks.find((x) => x.id === op.taskId);
@@ -110,6 +136,21 @@ export function formatContent(op: Op, state: TaskState): string {
 			if (!t) return `Created #${op.taskId}`;
 			const parent = t.parent !== undefined ? ` ↳#${t.parent}` : "";
 			return `Created #${t.id}: ${sanitizeTerminalText(t.subject)} (pending${parent})`;
+		}
+		case "plan": {
+			// Dancher extension (2026-10-10): 批量建轴响应——逐行列出 id/subject/key/依赖/父子，
+			// 后续 update 不用再 list 一轮。
+			const idToKey = new Map<number, string>();
+			for (const [k, id] of Object.entries(op.keys ?? {})) idToKey.set(id, k);
+			const lines = op.ids.map((id) => {
+				const t = state.tasks.find((x) => x.id === id);
+				if (!t) return `#${id}`;
+				const key = idToKey.get(id);
+				const deps = t.blockedBy?.length ? ` ⛓ ${t.blockedBy.map((d) => `#${d}`).join(",")}` : "";
+				const parent = t.parent !== undefined ? ` ↳#${t.parent}` : "";
+				return `#${t.id} ${sanitizeTerminalText(t.subject)}${key ? ` [key: ${key}]` : ""}${deps}${parent}`;
+			});
+			return `Planned ${op.count} tasks:\n${lines.join("\n")}`;
 		}
 		case "update": {
 			if (!op.changed) {
@@ -119,6 +160,9 @@ export function formatContent(op: Op, state: TaskState): string {
 			let text = `Updated #${op.id}${transition}`;
 			if (op.openSubtasks !== undefined) {
 				text += `\nNote: #${op.id} has ${op.openSubtasks} unfinished subtask(s) — complete or delete them, or fold their state into the summary.`;
+			}
+			if (op.parentReady !== undefined) {
+				text += `\nNote: all subtasks of #${op.parentReady} are now done — close out #${op.parentReady} (update id=${op.parentReady} status=completed) if nothing remains for it.`;
 			}
 			if (op.toStatus === "completed" && op.autoCleared !== undefined) {
 				text += ALL_DONE_SUFFIX + AUTO_CLEAR_SUFFIX(op.autoCleared);
@@ -136,10 +180,10 @@ export function formatContent(op: Op, state: TaskState): string {
 			if (!op.includeDeleted) view = view.filter((t) => t.status !== "deleted");
 			if (op.statusFilter) view = view.filter((t) => t.status === op.statusFilter);
 			if (op.filter) view = applyListFilter(view, op.filter);
-			return view.length === 0 ? "No tasks" : view.map(formatListLine).join("\n");
+			return view.length === 0 ? "No tasks" : view.map((t) => formatListLine(t, now)).join("\n");
 		}
 		case "get":
-			return formatGetLines(op.task, state);
+			return formatGetLines(op.task, state, now);
 		case "error":
 			return `Error: ${op.message}`;
 	}
@@ -163,8 +207,9 @@ export function buildToolResult(
 	params: TaskMutationParams,
 	state: TaskState,
 	op: Op,
+	now: number = Date.now(),
 ): { content: Array<{ type: "text"; text: string }>; details: TaskDetails } {
-	const text = formatContent(op, state);
+	const text = formatContent(op, state, now);
 	const details: TaskDetails = {
 		action,
 		params: params as Record<string, unknown>,

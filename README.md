@@ -6,7 +6,7 @@
 **Install (pinned ref):**
 
 ```sh
-pi install git:github.com/cy7372/rpiv-todo@v2.10.0-dancher.1
+pi install git:github.com/cy7372/rpiv-todo@v2.10.0-dancher.3
 ```
 
 ## What this fork adds on top of upstream 2.10.0
@@ -24,6 +24,9 @@ Five overlay patches (2026-09-07/09-11, formerly hand-edited into `node_modules`
 - **autoClearOnDrain config** (2026-10-08) — set `false` in `~/.config/rpiv-todo/config.json` to keep completed rows lingering (old behavior); read per mutation, no `/reload` needed
 - **Drain toast** (2026-10-08) — the TUI toast survives auto-clear via a drain-event handshake (tool layer sediments, overlay only toasts)
 - **Rich sediment** (2026-10-08) — completed lists sediment with per-task description and turnaround time (createdAt → completedAt)
+- **`plan` action** (2026-10-10) — batch-create a whole axis in one call: `items[]` (max 25) with optional per-item `key`/`dependsOn:[keys]`/`parent` (id or key)/`blockedBy` (existing ids); atomic (any invalid item rejects the whole batch, zero mutation), key→id map returned in the op and rendered in the response. Replaces N serial `create` round-trips when starting multi-step work
+- **Stale in_progress hint** (2026-10-10) — `list`/`get` append `⏳ Nh since last update` to in_progress rows idle >2h (waiting-user/blocked are parked by design and never hint); `now` is injectable for tests
+- **Last-subtask close-out nudge** (2026-10-10) — completing the last open subtask of an unfinished parent appends a `close out #N` advisory (mirror of the existing parent-with-open-children note)
 
 Dancher extension (2026-09-13, commit 470a885) — informed by [Ona's "rethinking the todo tool"](https://ona-frontmatter.chrprompt.com/blog/1697542992672/) post-mortem and the Claude Code / TaskTrellis feature survey:
 

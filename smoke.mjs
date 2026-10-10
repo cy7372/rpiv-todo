@@ -9,13 +9,25 @@ const nodePath = await import("node:path");
 const HERE = nodePath.dirname(fileURLToPath(new URL(".", import.meta.url)));
 
 function probe(rel) {
-	const candidates = [nodePath.resolve(HERE, "node_modules", rel), `D:/Programs/pi-web/node_modules/${rel}`];
+	const candidates = [nodePath.resolve(HERE, "node_modules", rel)];
+	// 2026-10-10 修复：补共享根候选（共享 npm 根 + 部署副本自带 node_modules）——此前
+	// 只探测 HERE/node_modules / 内核 releases / D: 盘旧布局，无 node_modules 的检出版
+	// （如 /var/tmp 开发树）会一路落到 D: 盘候选报 ERR_MODULE_NOT_FOUND。
+	const sharedRoot = "/opt/dancher/pi/plugins";
+	for (const base of [
+		nodePath.join(sharedRoot, "npm", "node_modules"),
+		nodePath.join(sharedRoot, "packages", "rpiv-todo", "node_modules"),
+	]) {
+		const p = nodePath.join(base, rel);
+		if (existsSync(p)) candidates.push(p);
+	}
 	const kernelRoot = "/opt/dancher/pi/install/releases";
 	if (existsSync(kernelRoot)) {
 		for (const ver of readdirSync(kernelRoot).sort().reverse()) {
 			candidates.push(nodePath.join(kernelRoot, ver, "node_modules", rel));
 		}
 	}
+	candidates.push(`D:/Programs/pi-web/node_modules/${rel}`);
 	const hit = candidates.find((p) => existsSync(p));
 	if (!hit) throw new Error(`smoke.mjs: 找不到 ${rel}（探测过 ${candidates.length} 个候选）`);
 	return hit;
@@ -181,6 +193,99 @@ check(
 	JSON.stringify(layout.visible.map((t) => [t.id, t.priority])),
 );
 check("no overflow", layout.hiddenCompleted === 0 && layout.truncatedTail === 0);
+
+// plan（2026-10-10）：批量建轴——一次调用建 N 条，key 依赖回填 blockedBy
+state = { tasks: [], nextId: 1 };
+run("create", { subject: "pre-existing task" }); // #1
+r = run("plan", {
+	items: [
+		{ subject: "research existing tool", key: "research", priority: "P0" },
+		{ subject: "implement feature", key: "impl", dependsOn: ["research"] },
+		{ subject: "write tests", key: "tests", dependsOn: ["research", "impl"], blockedBy: [1] },
+		{ subject: "edge cases", parent: "tests" },
+		{ subject: "docs update", blockedBy: [1] },
+	],
+});
+check(
+	"plan creates 5 tasks, state grows to 6",
+	r.op.kind === "plan" && r.op.count === 5 && state.tasks.length === 6 && state.nextId === 7,
+	JSON.stringify(r.op),
+);
+check("plan ids sequential from nextId", r.op.kind === "plan" && JSON.stringify(r.op.ids) === JSON.stringify([2, 3, 4, 5, 6]));
+const implTask = state.tasks.find((t) => t.id === 3);
+check("plan dependsOn wired into blockedBy", implTask.blockedBy.join(",") === "2", JSON.stringify(implTask.blockedBy));
+const testsTask = state.tasks.find((t) => t.id === 4);
+check(
+	"plan merges dependsOn + numeric blockedBy",
+	testsTask.blockedBy.join(",") === "1,2,3" && testsTask.parent === undefined,
+	JSON.stringify(testsTask.blockedBy),
+);
+const edgeTask = state.tasks.find((t) => t.id === 5);
+check("plan parent-by-key nests", edgeTask.parent === 4);
+check("plan op carries key→id map", r.op.kind === "plan" && r.op.keys && r.op.keys.research === 2 && r.op.keys.impl === 3);
+text = formatContent(r.op, state);
+check(
+	"plan response lists subjects + keys + deps",
+	text.includes("Planned 5 tasks") && text.includes("[key: research]") && text.includes("⛓ #2"),
+	text,
+);
+r = run("update", { id: 6, status: "in_progress" });
+check("plan-created blockedBy enforced", r.op.kind === "error" && r.op.message.includes("#1"));
+
+// plan 校验拒绝（原子：失败批零改动）
+r = run("plan", { items: [] });
+check("plan empty items rejected", r.op.kind === "error" && r.op.message.includes("items[]"));
+r = run("plan", { subject: "not items" });
+check("plan without items rejected", r.op.kind === "error");
+r = run("plan", { items: [{ subject: "a", key: "x" }, { subject: "b", key: "x" }] });
+check("plan duplicate key rejected", r.op.kind === "error" && r.op.message.includes("duplicate key"));
+r = run("plan", { items: [{ subject: "a", key: "x" }, { subject: "b", dependsOn: ["nope"] }] });
+check("plan unknown dependsOn key rejected", r.op.kind === "error" && r.op.message.includes("nope"));
+r = run("plan", { items: [{ subject: "a", key: "x", dependsOn: ["x"] }] });
+check("plan self-dependency rejected", r.op.kind === "error");
+r = run("plan", { items: [{ subject: "a", key: "x", dependsOn: ["y"] }, { subject: "b", key: "y", dependsOn: ["x"] }] });
+check("plan dependsOn cycle rejected", r.op.kind === "error" && r.op.message.includes("cycle"));
+r = run("plan", { items: [{ subject: "a", key: "x" }, { subject: "b", key: "b", parent: "x" }, { subject: "c", parent: "b" }] });
+check("plan parent-of-subtask rejected (one level)", r.op.kind === "error" && r.op.message.includes("one nesting level"));
+r = run("plan", { items: Array.from({ length: 26 }, (_, i) => ({ subject: `t${i}` })) });
+check("plan >25 items rejected", r.op.kind === "error" && r.op.message.includes("at most 25"));
+r = run("plan", { items: [{ subject: "" }] });
+check("plan empty subject rejected", r.op.kind === "error");
+check("failed plans leave state untouched", state.tasks.length === 6 && state.nextId === 7);
+
+// 末子任务完成 → 收父任务提示（2026-10-10）
+state = { tasks: [], nextId: 1 };
+run("create", { subject: "parent" }); // #1
+run("create", { subject: "child A", parent: 1 });
+run("create", { subject: "child B", parent: 1 });
+r = run("update", { id: 2, status: "completed" });
+check("non-last subtask completion: no nudge", r.op.kind === "update" && r.op.parentReady === undefined);
+r = run("update", { id: 3, status: "completed" });
+text = formatContent(r.op, state);
+check(
+	"last subtask done → parent close-out nudge",
+	r.op.kind === "update" && r.op.parentReady === 1 && text.includes("close out #1"),
+	text,
+);
+check("nudge 不触发清场（父未完）", r.op.autoCleared === undefined && state.tasks.length === 3);
+r = run("update", { id: 1, status: "completed" });
+check("parent completion drains without nudge", r.op.kind === "update" && r.op.autoCleared === 3 && r.op.parentReady === undefined);
+
+// list/get 陈旧提示（2026-10-10）：in_progress 挂超 2h 带 ⏳ 年龄；waiting-user/blocked 不提示
+state = { tasks: [], nextId: 1 };
+run("create", { subject: "fresh task" });
+run("update", { id: 1, status: "in_progress" });
+r = run("list", {});
+const nowMs = Date.now();
+check("fresh in_progress: no age hint", !formatContent(r.op, state, nowMs).includes("⏳"));
+check("3h in_progress: age hint", formatContent(r.op, state, nowMs + 3 * 3600_000).includes("⏳ 3.0h"));
+run("update", { id: 1, status: "waiting-user" });
+r = run("list", {});
+check("waiting-user parked: never hints", !formatContent(r.op, state, nowMs + 3 * 3600_000).includes("⏳"));
+run("update", { id: 1, status: "in_progress" });
+r = run("get", { id: 1 });
+text = formatContent(r.op, state, nowMs + 3 * 3600_000);
+check("get: updated row + stale hint", text.includes("updated:") && text.includes("⏳"), text);
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURES`);
 process.exit(failures === 0 ? 0 : 1);

@@ -25,15 +25,19 @@ export type Op =
 			toStatus: TaskStatus;
 			changed: boolean;
 			openSubtasks?: number;
+			/** Dancher extension (2026-10-10): 末子任务完成——父任务全部子任务已完且父未完，提示收掉父任务。 */
+			parentReady?: number;
 			/** Dancher extension (2026-10-08): auto-clear-on-drain — 完成最后一个任务时连带 clear 语义（清场计数）。 */
 			autoCleared?: number;
 			/** 同上：被清场任务详情（subject/description/时间戳），供 tool 层沉淀进 yinor（状态已清空，只能骑在 op 上）。 */
 			clearedTasks?: { id: number; subject: string; description?: string; createdAt?: number; completedAt?: number }[];
-	  }
+		}
 	| { kind: "delete"; id: number; subject: string }
 	| { kind: "list"; statusFilter?: TaskStatus; includeDeleted: boolean; filter?: string }
 	| { kind: "get"; task: Task }
 	| { kind: "clear"; count: number }
+	/** Dancher extension (2026-10-10): plan 批量建轴——一次调用建 N 条任务，key→id 映射骑在 op 上供响应展示。 */
+	| { kind: "plan"; count: number; ids: number[]; keys?: Record<string, number> }
 	| { kind: "error"; message: string };
 
 export interface ApplyResult {
@@ -56,6 +60,9 @@ function sameRecord(a: Record<string, unknown> | undefined, b: Record<string, un
 }
 
 const PRIORITIES: ReadonlySet<string> = new Set(["P0", "P1", "P2"]);
+
+/** plan 批量上限（2026-10-10）：防一次调用塞爆响应/状态；更大的轴分多次 plan。 */
+const PLAN_MAX_ITEMS = 25;
 
 /**
  * Validate a `parent` reference for subtask assignment: the parent must exist,
@@ -296,6 +303,20 @@ export function applyTaskMutation(
 				if (openSubtasks === 0) openSubtasks = undefined;
 			}
 
+			// Dancher extension (2026-10-10): 末子任务完成 → 提示收父任务（与上面的 openSubtasks
+			// 提示对称）。父任务存在、未完未删，且其余子任务全部完成/删除时才触发；父任务自己
+			// 就是清单尾巴的情况由 auto-clear 接管（父未完 → 不 drain，nudge 先行）。
+			let parentReady: number | undefined;
+			if (newStatus === "completed" && current.status !== "completed" && updated.parent !== undefined) {
+				const parentTask = newTasks.find((t) => t.id === updated.parent);
+				if (parentTask && parentTask.status !== "completed" && parentTask.status !== "deleted") {
+					const openSiblings = newTasks.filter(
+						(t) => t.parent === updated.parent && t.id !== updated.id && t.status !== "completed" && t.status !== "deleted",
+					).length;
+					if (openSiblings === 0) parentReady = updated.parent;
+				}
+			}
+
 			// Dancher extension (2026-10-08): auto-clear-on-drain — 真实的 completed 转换把清单
 			// 的未完成工作清零时，同一 op 连带 clear 语义（tasks 清空、nextId 归 1），下一组从
 			// 白板开始（用户裁决：滚动堆积新旧清单会稀释进度视图信号）。subject 骑在 op 上，
@@ -321,7 +342,7 @@ export function applyTaskMutation(
 				}
 			}
 
-			return {
+				return {
 				state: autoCleared !== undefined ? { tasks: [], nextId: 1 } : { tasks: newTasks, nextId: state.nextId },
 				op: {
 					kind: "update",
@@ -330,6 +351,7 @@ export function applyTaskMutation(
 					toStatus: newStatus,
 					changed,
 					...(openSubtasks !== undefined ? { openSubtasks } : {}),
+					...(parentReady !== undefined ? { parentReady } : {}),
 					...(autoCleared !== undefined ? { autoCleared, clearedTasks } : {}),
 				},
 			};
@@ -383,6 +405,122 @@ export function applyTaskMutation(
 			return {
 				state: { tasks: [], nextId: 1 },
 				op: { kind: "clear", count },
+			};
+		}
+
+		case "plan": {
+			// Dancher extension (2026-10-10): 批量建轴——一次调用铺整条任务轴（mission 工具的
+			// items[] 心智模型）。原子语义：任何一项校验失败，整批拒绝、状态零改动。两段式：
+			// 先校验+建任务（拿 id），再回填 dependsOn/parent（key→id 解析）。
+			const items = params.items;
+			if (!Array.isArray(items) || items.length === 0) {
+				return errorResult(state, "items[] required for plan (at least one task per call)");
+			}
+			if (items.length > PLAN_MAX_ITEMS) {
+				return errorResult(state, `plan accepts at most ${PLAN_MAX_ITEMS} items per call — split into multiple plan calls`);
+			}
+
+			// Pass 0a: 逐项结构校验 + key 收集（唯一性）。
+			const keyToIndex = new Map<string, number>();
+			for (let i = 0; i < items.length; i++) {
+				const it = items[i];
+				if (typeof it.subject !== "string" || !it.subject.trim()) {
+					return errorResult(state, `items[${i}]: subject required`);
+				}
+				if (it.priority !== undefined && !PRIORITIES.has(it.priority)) {
+					return errorResult(state, `items[${i}]: priority must be one of P0, P1, P2`);
+				}
+				if (it.key !== undefined) {
+					const k = String(it.key).trim();
+					if (!k) return errorResult(state, `items[${i}]: key must be a non-empty alias`);
+					if (keyToIndex.has(k)) return errorResult(state, `items[${i}]: duplicate key "${k}" (already used by items[${keyToIndex.get(k)}])`);
+					keyToIndex.set(k, i);
+				}
+			}
+
+			// Pass 0b: 数字 blockedBy（既有任务，与 create 同规）。
+			for (let i = 0; i < items.length; i++) {
+				for (const dep of items[i].blockedBy ?? []) {
+					const depTask = state.tasks.find((t) => t.id === dep);
+					if (!depTask) return errorResult(state, `items[${i}] blockedBy: #${dep} not found`);
+					if (depTask.status === "deleted") return errorResult(state, `items[${i}] blockedBy: #${dep} is deleted`);
+				}
+			}
+
+			// Pass 0c: dependsOn 键解析 + 批内环检测（DFS 三色）。
+			const keyDeps: string[][] = items.map((it) => (it.dependsOn ?? []).map(String));
+			for (let i = 0; i < items.length; i++) {
+				for (const k of keyDeps[i]) {
+					if (!keyToIndex.has(k)) return errorResult(state, `items[${i}] dependsOn: key "${k}" not defined in this batch`);
+					if (keyToIndex.get(k) === i) return errorResult(state, `items[${i}] dependsOn itself (key "${k}")`);
+				}
+			}
+			const depColor = new Array<number>(items.length).fill(0); // 0=white 1=gray 2=black
+			const dfsCycle = (i: number): boolean => {
+				depColor[i] = 1;
+				for (const k of keyDeps[i]) {
+					const j = keyToIndex.get(k)!;
+					if (depColor[j] === 1) return true;
+					if (depColor[j] === 0 && dfsCycle(j)) return true;
+				}
+				depColor[i] = 2;
+				return false;
+			};
+			for (let i = 0; i < items.length; i++) {
+				if (depColor[i] === 0 && dfsCycle(i)) {
+					return errorResult(state, "dependsOn would create a cycle within the batch");
+				}
+			}
+
+			// Pass 0d: parent 解析（数字→既有任务同规校验；字符串→批内 key + 单层限制）。
+			for (let i = 0; i < items.length; i++) {
+				const p = items[i].parent;
+				if (p === undefined) continue;
+				if (typeof p === "number") {
+					const err = validateParent(state, undefined, p);
+					if (err) return errorResult(state, `items[${i}] ${err}`);
+				} else {
+					const k = String(p).trim();
+					const idx = keyToIndex.get(k);
+					if (idx === undefined) return errorResult(state, `items[${i}] parent: key "${k}" not defined in this batch`);
+					if (idx === i) return errorResult(state, `items[${i}] cannot be its own parent`);
+					if (items[idx].parent !== undefined) {
+							return errorResult(state, `items[${idx}] (key "${k}") is itself a subtask — one nesting level only`);
+					}
+				}
+			}
+
+			// Pass 1: 建 N 条任务（整批共用一个 now，时间戳仅信息性）。
+			const now = Date.now();
+			const keyToId = new Map<string, number>();
+			const created: Task[] = [];
+			let nextId = state.nextId;
+			for (const it of items) {
+				const t: Task = { id: nextId++, subject: it.subject, status: "pending", createdAt: now, updatedAt: now };
+				if (it.description) t.description = it.description;
+				if (it.activeForm) t.activeForm = it.activeForm;
+				if (it.owner) t.owner = it.owner;
+				if (it.priority !== undefined) t.priority = it.priority;
+				created.push(t);
+				if (it.key !== undefined) keyToId.set(String(it.key).trim(), t.id);
+			}
+
+			// Pass 2: 回填依赖与父子关系（key→id 解析，校验已在 Pass 0 完成）。
+			for (let i = 0; i < items.length; i++) {
+				const it = items[i];
+			const t = created[i];
+			const deps: number[] = [...(it.blockedBy ?? [])];
+				for (const k of keyDeps[i]) deps.push(keyToId.get(k)!);
+				if (deps.length) t.blockedBy = [...new Set(deps)];
+				if (it.parent !== undefined) {
+					t.parent = typeof it.parent === "number" ? it.parent : keyToId.get(String(it.parent).trim())!;
+				}
+			}
+
+			const keys = keyToId.size ? Object.fromEntries(keyToId) : undefined;
+			return {
+				state: { tasks: [...state.tasks, ...created], nextId },
+				op: { kind: "plan", count: created.length, ids: created.map((t) => t.id), ...(keys !== undefined ? { keys } : {}) },
 			};
 		}
 	}

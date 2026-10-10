@@ -27,7 +27,30 @@ export type TaskStatus = "pending" | "in_progress" | "waiting-user" | "blocked" 
 
 export type TaskPriority = "P0" | "P1" | "P2";
 
-export type TaskAction = "create" | "update" | "list" | "get" | "delete" | "clear";
+export type TaskAction = "create" | "update" | "list" | "get" | "delete" | "clear" | "plan";
+
+/**
+ * One entry of a `plan` batch (2026-10-10): a task to create, plus optional
+ * batch-local wiring. `key` is an alias other items reference via `dependsOn`
+ * (string) or `parent` (string form) before numeric ids are assigned — the
+ * mission-tool mental model. Numeric `blockedBy`/`parent` reference existing
+ * tasks and validate exactly like `create`.
+ */
+export interface PlanItem {
+	subject: string;
+	description?: string;
+	activeForm?: string;
+	owner?: string;
+	priority?: TaskPriority;
+	/** Batch-local alias, unique within the batch. */
+	key?: string;
+	/** Keys of other items in this batch this task is blocked by. */
+	dependsOn?: string[];
+	/** Existing task id (number) or batch key (string) to nest one level under. */
+	parent?: number | string;
+	/** Initial blockedBy — existing task ids (validated like create). */
+	blockedBy?: number[];
+}
 
 export interface Task {
 	id: number;
@@ -83,6 +106,8 @@ export interface TaskMutationParams {
 	parent?: number;
 	priority?: TaskPriority;
 	filter?: string;
+	/** plan only: the batch to create. */
+	items?: PlanItem[];
 }
 
 // ---------------------------------------------------------------------------
@@ -91,7 +116,7 @@ export interface TaskMutationParams {
 // ---------------------------------------------------------------------------
 
 export const TodoParamsSchema = Type.Object({
-	action: StringEnum(["create", "update", "list", "get", "delete", "clear"] as const),
+	action: StringEnum(["create", "update", "list", "get", "delete", "clear", "plan"] as const),
 	subject: Type.Optional(Type.String({ description: "Task subject line (required for create)" })),
 	description: Type.Optional(Type.String({ description: "Long-form task description" })),
 	activeForm: Type.Optional(
@@ -152,6 +177,46 @@ export const TodoParamsSchema = Type.Object({
 		Type.Boolean({
 			description: "If true, list action returns deleted (tombstoned) tasks as well. Default: false.",
 		}),
+	),
+	items: Type.Optional(
+		Type.Array(
+			Type.Object({
+				subject: Type.String({ description: "Task subject line (required per item)" }),
+				description: Type.Optional(Type.String({ description: "Long-form task description" })),
+				activeForm: Type.Optional(
+					Type.String({ description: "Present-continuous spinner label shown while status is in_progress" }),
+				),
+				owner: Type.Optional(Type.String({ description: "Agent/owner assigned to this task" })),
+				priority: Type.Optional(
+					StringEnum(["P0", "P1", "P2"] as const, {
+						description: "Priority hint: P0 (urgent) > P1 (normal) > P2 (low). Unset = queue position.",
+					}),
+				),
+				key: Type.Optional(
+					Type.String({
+						description:
+							"Batch-local alias (e.g. 'impl') so other items can reference this task in dependsOn/parent before ids are assigned",
+					}),
+				),
+				dependsOn: Type.Optional(
+					Type.Array(Type.String(), {
+						description: "Keys of other items in this batch this task waits on (wired into blockedBy)",
+					}),
+				),
+				parent: Type.Optional(
+					Type.Union([Type.Number(), Type.String()], {
+						description: "Existing task id (number) or a batch key (string) to nest one level under",
+					}),
+				),
+				blockedBy: Type.Optional(
+					Type.Array(Type.Number(), { description: "Existing task ids this task waits on (validated like create)" }),
+				),
+			}),
+			{
+				description:
+					"plan only: batch of tasks to create in one call (max 25). Give items a key and wire dependencies with dependsOn:[keys] — the response returns the id↔key map. Prefer this over serial creates when starting multi-step work.",
+			},
+		),
 	),
 });
 
