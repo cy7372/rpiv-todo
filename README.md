@@ -1,3 +1,10 @@
+# ⚠️ 本仓已停更 —— 代码已并入 dancher-extensions
+
+> **2026-10-10 起，这个包以 `dancher-todo` 的名字活在 [dancher-extensions](https://git.dancher.net/cy/dancher-extensions) 仓 `packages/dancher-todo/`（v3.0.0 起）。**
+> 本仓保留作历史归档：v2.10.0-dancher.* 标签与全部 fork 历史。上游同步已终止（不跟 rpiv-mono v2.12+）。
+
+---
+
 # cy7372/rpiv-todo — vendored fork with dancher extensions
 
 > Fork of [`@juicesharp/rpiv-todo`](https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo) 2.10.0, vendored for self-maintenance (2026-09-13).
